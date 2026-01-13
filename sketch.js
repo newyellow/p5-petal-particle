@@ -1,9 +1,14 @@
-let petalImg;
+let petalImgs = [];
 let petals = [];
 let dofShader;
 
 // Parameters for customization
 let params = {
+  // Add your image URLs here
+  imageUrls: [
+    'imgs/petal-01.png',
+    'imgs/petal-02.png',
+  ],
   particleCount: 60,
   minSize: 10,
   maxSize: 80,
@@ -59,7 +64,9 @@ async function setup() {
   // Load the shader
   dofShader = createShader(vert, frag);
 
-  petalImg = await loadImage('imgs/petal.png');
+  // Load all images from the list
+  petalImgs = await Promise.all(params.imageUrls.map(url => loadImage(url)));
+  
   initPetals();
 }
 
@@ -76,9 +83,6 @@ function draw() {
   ambientLight(180);
   directionalLight(255, 255, 255, 0, 0, -1);
   pointLight(255, 255, 255, width/2, -height/2, 200);
-
-  // Sorting petals by Z-depth (optional but better for transparency/DOF)
-  // petals.sort((a, b) => a.pos.z - b.pos.z);
 
   for (let petal of petals) {
     petal.update();
@@ -104,6 +108,11 @@ class Petal {
     
     this.vel = createVector(params.baseWind + random(-1, 1), random(-1, 1), random(-0.5, 0.5));
     this.size = random(params.minSize, params.maxSize);
+    
+    // Randomly pick an image from the loaded list
+    if (petalImgs.length > 0) {
+      this.img = random(petalImgs);
+    }
     
     this.rot = createVector(random(TWO_PI), random(TWO_PI), random(TWO_PI));
     this.rotVel = createVector(random(-1, 1), random(-1, 1), random(-1, 1)).mult(params.rotationSpeed);
@@ -137,16 +146,12 @@ class Petal {
   }
 
   display() {
-    // DOF Calculation
-    // Normalized size s (0 to 1)
     let s = map(this.size, params.minSize, params.maxSize, 0, 1);
     let blurStrength = 0;
     
     if (s > 0.7 && s <= 0.9) {
-      // 0.7 ~ 0.9 ramps from 0 to maxBlur
       blurStrength = map(s, 0.7, 0.9, 0, params.maxBlur);
     } else if (s > 0.9) {
-      // Above 0.9 stays at maxBlur
       blurStrength = params.maxBlur;
     }
 
@@ -158,19 +163,16 @@ class Petal {
     
     noStroke();
     
-    if (petalImg && petalImg.width > 0) {
+    if (this.img && this.img.width > 0) {
       if (params.enableBlur && blurStrength > 0) {
-        // Use shader for DOF effect
         shader(dofShader);
-        dofShader.setUniform('uTexture', petalImg);
+        dofShader.setUniform('uTexture', this.img);
         dofShader.setUniform('uBlurStrength', blurStrength);
-        
-        plane(this.size, this.size * (petalImg.height / petalImg.width));
+        plane(this.size, this.size * (this.img.height / this.img.width));
         resetShader();
       } else {
-        // Regular drawing without shader
-        texture(petalImg);
-        plane(this.size, this.size * (petalImg.height / petalImg.width));
+        texture(this.img);
+        plane(this.size, this.size * (this.img.height / this.img.width));
       }
     } else {
       fill(255, 180, 200, 200);

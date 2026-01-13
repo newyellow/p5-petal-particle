@@ -41,12 +41,15 @@
 ### 4. 配置粒子參數
 你可以直接在 `sketch.js` 頂部的 `params` 對象中修改參數來調整效果：
 
+- `imageUrls`: 圖片 URL 列表，系統會從中隨機挑選圖片生成粒子。
 - `particleCount`: 花瓣數量。
 - `minSize` / `maxSize`: 花瓣的大小範圍。
 - `baseWind`: 基礎風力（負值代表從右向左吹）。
 - `noiseScale` / `noiseStrength`: 風的隨機波動頻率和強度。
 - `rotationSpeed`: 花瓣翻滾的速度。
 - `gravity`: 下落速度。
+- `enableBlur`: 是否開啟景深模糊效果（開啟會消耗更多效能）。
+- `maxBlur`: 最大模糊強度。
 
 ### 5. 注意事項 (p5.js 2.0)
 本系統採用 p5.js 2.0 語法：
