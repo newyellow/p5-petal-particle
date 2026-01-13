@@ -42,7 +42,10 @@
 你可以直接在 `sketch.js` 頂部的 `params` 對象中修改參數來調整效果：
 
 - `imageUrls`: 圖片 URL 列表，系統會從中隨機挑選圖片生成粒子。
-- `particleCount`: 花瓣數量。
+- `maxParticleCount`: 同時存在的最大粒子數量。
+- `emissionRate`: 每秒生成的粒子數量（發射率）。
+- `fadeInTime`: 粒子生成時的淡入時間（秒）。
+- `fadeOutTime`: 粒子消失時的淡出時間（秒）。
 - `minSize` / `maxSize`: 花瓣的大小範圍。
 - `baseWind`: 基礎風力（負值代表從右向左吹）。
 - `noiseScale` / `noiseStrength`: 風的隨機波動頻率和強度。

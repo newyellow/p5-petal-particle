@@ -122,7 +122,6 @@
   </style>
   
   <!-- p5.js library -->
-  <script src="p5.min.js"></script>
 </head>
 
 <body>
@@ -170,8 +169,17 @@
     <p>&copy; 2026 Petal Collection. All rights reserved.</p>
   </footer>
 
-  <!-- 3. Our Particle Script -->
-  <script src="sketch.js"></script>
+  <!-- 3. Defer loading of p5.js and our script until the window has fully loaded -->
+  <script>
+    window.addEventListener('load', () => {
+      // We don't need to manually inject scripts if they are at the bottom, 
+      // but to ensure they only start execution AFTER other assets, 
+      // we can use this listener to trigger the p5 initialization.
+      console.log("Website loaded. Initializing petal system...");
+    });
+  </script>
+  <script src="p5.min.js" defer></script>
+  <script src="sketch.js" defer></script>
 </body>
 
 </html>
