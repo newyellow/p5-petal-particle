@@ -16,7 +16,9 @@ let params = {
 
 async function setup() {
   // Use WEBGL for 3D rotations
-  createCanvas(windowWidth, windowHeight, WEBGL);
+  let canvas = createCanvas(windowWidth, windowHeight, WEBGL);
+  // Move canvas to the specific container
+  canvas.parent('petal-canvas-container');
 
   // In p5.js 2.0, we use async/await for loading assets in setup
   petalImg = await loadImage('imgs/petal.png');
@@ -32,8 +34,8 @@ function initPetals() {
 }
 
 function draw() {
-  // A nice subtle gradient-like background
-  background(25, 20, 35);
+  // Clear with 0 alpha to make the canvas transparent
+  clear(); 
   
   // Lights help with the 3D feel
   ambientLight(180);
