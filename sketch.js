@@ -2,6 +2,8 @@ let petalImgs = [];
 let petals = [];
 let dofShader;
 let lastEmissionTime = 0;
+let petalMesh = null;
+let debugImg = null;
 
 // Parameters for customization
 let params = {
@@ -22,24 +24,93 @@ let params = {
   gravity: 0.05,
   noiseFrequency: 0.001,
   maxBlur: 0.1, 
-  enableBlur: true 
+  enableBlur: true,
+  meshDetailX: 20,      // Mesh grid density (columns)
+  meshDetailY: 20,      // Mesh grid density (rows)
+  vertexNoiseScale: 0.006, // Vertex noise scale for fluttering
+  vertexNoiseStrength: 24.0, // Vertex displacement strength
+  debugPlane: false,     // Show a debug plane to visualize vertex noise
+  debugPlaneSize: 240,  // Debug plane size
+  debugPlaneRotationX: 90, // Debug plane rotation X (degrees)
+  debugPlaneRotationY: 0.0, // Debug plane rotation Y (degrees)
+  debugPlaneRotationZ: 0.0    // Debug plane rotation Z (degrees)
 };
 
 // Shader code for DOF blur effect with Alpha support
 const vert = `
+  precision mediump float;
+
   attribute vec3 aPosition;
+  attribute vec3 aNormal;
   attribute vec2 aTexCoord;
   varying vec2 vTexCoord;
   uniform mat4 uProjectionMatrix;
   uniform mat4 uModelViewMatrix;
+  uniform mat4 uModelMatrix;
+  uniform mat4 uViewMatrix;
+  uniform mat3 uNormalMatrix;
+  uniform float uTime;
+  uniform float uSeed;
+  uniform float uVertexNoiseScale;
+  uniform float uVertexNoiseStrength;
+
+  // 3D noise (simple, fast value noise)
+  float hash(vec3 p) {
+    p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
+    p *= 17.0;
+    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+  }
+
+  float noise3(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+
+    float n000 = hash(i + vec3(0.0, 0.0, 0.0));
+    float n100 = hash(i + vec3(1.0, 0.0, 0.0));
+    float n010 = hash(i + vec3(0.0, 1.0, 0.0));
+    float n110 = hash(i + vec3(1.0, 1.0, 0.0));
+    float n001 = hash(i + vec3(0.0, 0.0, 1.0));
+    float n101 = hash(i + vec3(1.0, 0.0, 1.0));
+    float n011 = hash(i + vec3(0.0, 1.0, 1.0));
+    float n111 = hash(i + vec3(1.0, 1.0, 1.0));
+
+    float n00 = mix(n000, n100, f.x);
+    float n01 = mix(n001, n101, f.x);
+    float n10 = mix(n010, n110, f.x);
+    float n11 = mix(n011, n111, f.x);
+    float n0 = mix(n00, n10, f.y);
+    float n1 = mix(n01, n11, f.y);
+    return mix(n0, n1, f.z);
+  }
+
   void main() {
     vTexCoord = aTexCoord;
-    gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aPosition, 1.0);
+    vec3 pos = aPosition;
+
+    // Edge weight so center stays more stable than the edges
+    vec2 centered = vTexCoord - 0.5;
+    float edge = smoothstep(0.1, 0.9, length(centered) * 2.0);
+
+    // World-space position and normal
+    vec4 worldPos = uModelMatrix * vec4(pos, 1.0);
+    vec3 worldNormal = normalize(mat3(uModelMatrix) * aNormal);
+
+    // 3D noise based on world position
+    vec3 p = worldPos.xyz * uVertexNoiseScale + vec3(0.0, 0.0, uTime * 0.01 + uSeed);
+    float n = noise3(p) * 2.0 - 1.0;
+
+    // Displace along world normal
+    worldPos.xyz += worldNormal * n * edge * uVertexNoiseStrength;
+
+    // Project using view-projection
+    gl_Position = uProjectionMatrix * uViewMatrix * worldPos;
   }
 `;
 
 const frag = `
   precision mediump float;
+
   varying vec2 vTexCoord;
   uniform sampler2D uTexture;
   uniform float uBlurStrength;
@@ -67,10 +138,50 @@ async function setup() {
 
   dofShader = createShader(vert, frag);
   petalImgs = await Promise.all(params.imageUrls.map(url => loadImage(url)));
+  petalMesh = buildPetalMesh();
+
+  if(params.debugPlane) {
+    debugImg = await loadImage('imgs/debug.png');
+  }
   
   // Start with no petals, they will be emitted over time
   petals = [];
   lastEmissionTime = millis();
+}
+
+function buildPetalMesh() {
+  const detailX = max(1, floor(params.meshDetailX));
+  const detailY = max(1, floor(params.meshDetailY));
+
+  // Build a reusable p5.Geometry mesh using WebGL's internal geometry builder
+  const geom = buildGeometry(() => {
+    beginShape(TRIANGLES);
+    for (let y = 0; y < detailY; y++) {
+      const v0 = y / detailY;
+      const v1 = (y + 1) / detailY;
+      for (let x = 0; x < detailX; x++) {
+        const u0 = x / detailX;
+        const u1 = (x + 1) / detailX;
+
+        const x0 = u0 - 0.5;
+        const x1 = u1 - 0.5;
+        const y0 = v0 - 0.5;
+        const y1 = v1 - 0.5;
+
+        // Triangle 1
+        vertex(x0, y0, 0, u0, v0);
+        vertex(x1, y0, 0, u1, v0);
+        vertex(x1, y1, 0, u1, v1);
+        // Triangle 2
+        vertex(x0, y0, 0, u0, v0);
+        vertex(x1, y1, 0, u1, v1);
+        vertex(x0, y1, 0, u0, v1);
+      }
+    }
+    endShape();
+  });
+
+  return geom;
 }
 
 function draw() {
@@ -103,6 +214,35 @@ function draw() {
       petals.splice(i, 1);
     }
   }
+
+  drawDebugPlane();
+}
+
+function drawDebugPlane() {
+  if (!params.debugPlane || !petalImgs[0]) {
+    return;
+  }
+
+  push();
+  translate(0, 0, 0);
+  rotateX(radians(params.debugPlaneRotationX));
+  rotateY(radians(params.debugPlaneRotationY));
+  rotateZ(radians(params.debugPlaneRotationZ));
+  noStroke();
+
+  shader(dofShader);
+  dofShader.setUniform('uTexture', debugImg);
+  dofShader.setUniform('uBlurStrength', 0);
+  dofShader.setUniform('uOpacity', 1);
+  dofShader.setUniform('uTime', millis() / 100);
+  dofShader.setUniform('uSeed', 123.456);
+  dofShader.setUniform('uVertexNoiseScale', params.vertexNoiseScale);
+  dofShader.setUniform('uVertexNoiseStrength', params.vertexNoiseStrength);
+
+  scale(params.debugPlaneSize, params.debugPlaneSize, 1);
+  model(petalMesh);
+  resetShader();
+  pop();
 }
 
 class Petal {
@@ -129,6 +269,7 @@ class Petal {
     this.rotVel = createVector(random(-1, 1), random(-1, 1), random(-1, 1)).mult(params.rotationSpeed);
     
     this.noiseOffset = random(10000);
+    this.seed = random(1000);
     
     // Fade and Life state
     this.opacity = 0;
@@ -201,8 +342,16 @@ class Petal {
       // Only apply blur if enabled and needed, otherwise 0
       dofShader.setUniform('uBlurStrength', (params.enableBlur ? blurStrength : 0));
       dofShader.setUniform('uOpacity', this.opacity);
-      
-      plane(this.size, this.size * (this.img.height / this.img.width));
+      dofShader.setUniform('uTime', millis() / 100);
+      dofShader.setUniform('uSeed', this.seed);
+      dofShader.setUniform('uVertexNoiseScale', params.vertexNoiseScale);
+      dofShader.setUniform('uVertexNoiseStrength', params.vertexNoiseStrength);
+
+      const aspect = this.img.height / this.img.width;
+      push();
+      scale(this.size, this.size * aspect, 1);
+      model(petalMesh);
+      pop();
       resetShader();
     } else {
       fill(255, 180, 200, 200 * this.opacity);
