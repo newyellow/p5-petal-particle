@@ -4,6 +4,8 @@ let dofShader;
 let lastEmissionTime = 0;
 let petalMesh = null;
 let debugImg = null;
+let overlayShader;
+let petalBuffer;
 
 // Parameters for customization
 let params = {
@@ -12,7 +14,7 @@ let params = {
     'imgs/petal-02.png',
   ],
   maxParticleCount: 60,   // Limit the maximum number of particles
-  emissionRate: 12,        // Particles per second
+  emissionRate: 6,        // Particles per second
   fadeInTime: 0.6,        // In seconds
   fadeOutTime: 0.6,       // In seconds
   minSize: 10,
@@ -21,14 +23,19 @@ let params = {
   noiseScale: 0.002,
   noiseStrength: 1.2,
   rotationSpeed: 0.01,
-  gravity: 0.05,
+  gravity: 0.02,
   noiseFrequency: 0.001,
-  maxBlur: 0.1, 
+  maxBlur: 0.08, 
   enableBlur: true,
-  meshDetailX: 20,      // Mesh grid density (columns)
-  meshDetailY: 20,      // Mesh grid density (rows)
+  meshDetailX: 10,      // Mesh grid density (columns)
+  meshDetailY: 10,      // Mesh grid density (rows)
   vertexNoiseScale: 0.006, // Vertex noise scale for fluttering
-  vertexNoiseStrength: 24.0, // Vertex displacement strength
+  vertexNoiseStrength: 36.0, // Vertex displacement strength
+  blurNearZ: -3.6,      // World Z where blur starts
+  blurFarZ: 3.6,        // World Z where blur reaches max
+  centerMaskRadius: 0.6, // Radius (0-1) from center where masking starts
+  centerMaskFeather: 0.6, // Softness of the mask edge
+  centerMaskMinOpacity: 0.03, // Minimum opacity at center
   debugPlane: false,     // Show a debug plane to visualize vertex noise
   debugPlaneSize: 240,  // Debug plane size
   debugPlaneRotationX: 90, // Debug plane rotation X (degrees)
@@ -44,6 +51,7 @@ const vert = `
   attribute vec3 aNormal;
   attribute vec2 aTexCoord;
   varying vec2 vTexCoord;
+  varying float vWorldZ;
   uniform mat4 uProjectionMatrix;
   uniform mat4 uModelViewMatrix;
   uniform mat4 uModelMatrix;
@@ -103,6 +111,8 @@ const vert = `
     // Displace along world normal
     worldPos.xyz += worldNormal * n * edge * uVertexNoiseStrength;
 
+    vWorldZ = worldPos.z;
+
     // Project using view-projection
     gl_Position = uProjectionMatrix * uViewMatrix * worldPos;
   }
@@ -112,17 +122,23 @@ const frag = `
   precision mediump float;
 
   varying vec2 vTexCoord;
+  varying float vWorldZ;
   uniform sampler2D uTexture;
   uniform float uBlurStrength;
+  uniform float uBlurNearZ;
+  uniform float uBlurFarZ;
   uniform float uOpacity;
 
   void main() {
+    float blurT = clamp((vWorldZ - uBlurNearZ) / (uBlurFarZ - uBlurNearZ), 0.0, 1.0);
+    float blurStrength = uBlurStrength * blurT;
+
     vec4 color = vec4(0.0);
     float total = 0.0;
     
     for (float x = -1.0; x <= 1.0; x++) {
       for (float y = -1.0; y <= 1.0; y++) {
-        vec2 offset = vec2(x, y) * uBlurStrength;
+        vec2 offset = vec2(x, y) * blurStrength;
         color += texture2D(uTexture, vTexCoord + offset);
         total += 1.0;
       }
@@ -132,13 +148,46 @@ const frag = `
   }
 `;
 
+// Full-screen pass (center mask)
+const overlayVert = `
+  attribute vec3 aPosition;
+  attribute vec2 aTexCoord;
+  varying vec2 vTexCoord;
+  uniform mat4 uProjectionMatrix;
+  uniform mat4 uModelViewMatrix;
+  void main() {
+    vTexCoord = aTexCoord;
+    gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aPosition, 1.0);
+  }
+`;
+
+const overlayFrag = `
+  precision mediump float;
+  varying vec2 vTexCoord;
+  uniform sampler2D uScene;
+  uniform float uMaskRadius;
+  uniform float uMaskFeather;
+  uniform float uMaskMinOpacity;
+  void main() {
+    vec4 color = texture2D(uScene, vTexCoord);
+    vec2 centered = vTexCoord - 0.5;
+    float dist = length(centered) * 2.0;
+    float t = smoothstep(uMaskRadius, uMaskRadius + uMaskFeather, dist);
+    float maskOpacity = mix(uMaskMinOpacity, 1.0, t);
+    // Fade petals near the center by reducing both color and alpha
+    gl_FragColor = vec4(color.rgb * maskOpacity, color.a * maskOpacity);
+  }
+`;
+
 async function setup() {
   let canvas = createCanvas(windowWidth, windowHeight, WEBGL);
   canvas.parent('petal-canvas-container');
 
   dofShader = createShader(vert, frag);
+  overlayShader = createShader(overlayVert, overlayFrag);
   petalImgs = await Promise.all(params.imageUrls.map(url => loadImage(url)));
   petalMesh = buildPetalMesh();
+  petalBuffer = createFramebuffer();
 
   if(params.debugPlane) {
     debugImg = await loadImage('imgs/debug.png');
@@ -185,8 +234,10 @@ function buildPetalMesh() {
 }
 
 function draw() {
-  clear(); 
-  
+  // Render petals into the offscreen buffer
+  petalBuffer.begin();
+  clear();
+
   ambientLight(180);
   directionalLight(255, 255, 255, 0, 0, -1);
   pointLight(255, 255, 255, width/2, -height/2, 200);
@@ -203,6 +254,9 @@ function draw() {
     }
   }
 
+  // Sort by Z to reduce transparency artifacts (back-to-front)
+  petals.sort((a, b) => a.pos.z - b.pos.z);
+
   // Update and display petals
   for (let i = petals.length - 1; i >= 0; i--) {
     let petal = petals[i];
@@ -216,6 +270,28 @@ function draw() {
   }
 
   drawDebugPlane();
+  petalBuffer.end();
+
+  // Composite with a full-screen pass that applies the center mask
+  clear();
+  drawCenterMaskOverlay();
+}
+
+function drawCenterMaskOverlay() {
+  push();
+  resetMatrix();
+  noStroke();
+  shader(overlayShader);
+  const sceneTex = petalBuffer.color || petalBuffer;
+  overlayShader.setUniform('uScene', sceneTex);
+  overlayShader.setUniform('uMaskRadius', params.centerMaskRadius);
+  overlayShader.setUniform('uMaskFeather', params.centerMaskFeather);
+  overlayShader.setUniform('uMaskMinOpacity', params.centerMaskMinOpacity);
+  rectMode(CENTER);
+  // Use the current WEBGL coordinate system
+  rect(0, 0, width, height);
+  resetShader();
+  pop();
 }
 
 function drawDebugPlane() {
@@ -232,7 +308,9 @@ function drawDebugPlane() {
 
   shader(dofShader);
   dofShader.setUniform('uTexture', debugImg);
-  dofShader.setUniform('uBlurStrength', 0);
+  dofShader.setUniform('uBlurStrength', params.maxBlur);
+  dofShader.setUniform('uBlurNearZ', params.blurNearZ);
+  dofShader.setUniform('uBlurFarZ', params.blurFarZ);
   dofShader.setUniform('uOpacity', 1);
   dofShader.setUniform('uTime', millis() / 100);
   dofShader.setUniform('uSeed', 123.456);
@@ -318,15 +396,6 @@ class Petal {
   }
 
   display() {
-    let s = map(this.size, params.minSize, params.maxSize, 0, 1);
-    let blurStrength = 0;
-    
-    if (s > 0.7 && s <= 0.9) {
-      blurStrength = map(s, 0.7, 0.9, 0, params.maxBlur);
-    } else if (s > 0.9) {
-      blurStrength = params.maxBlur;
-    }
-
     push();
     translate(this.pos.x, this.pos.y, this.pos.z);
     rotateX(this.rot.x);
@@ -340,7 +409,9 @@ class Petal {
       shader(dofShader);
       dofShader.setUniform('uTexture', this.img);
       // Only apply blur if enabled and needed, otherwise 0
-      dofShader.setUniform('uBlurStrength', (params.enableBlur ? blurStrength : 0));
+      dofShader.setUniform('uBlurStrength', params.maxBlur);
+      dofShader.setUniform('uBlurNearZ', params.blurNearZ);
+      dofShader.setUniform('uBlurFarZ', params.blurFarZ);
       dofShader.setUniform('uOpacity', this.opacity);
       dofShader.setUniform('uTime', millis() / 100);
       dofShader.setUniform('uSeed', this.seed);
