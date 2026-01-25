@@ -35,7 +35,7 @@ let params = {
   blurFarZ: 3.6,        // World Z where blur reaches max
   centerMaskRadius: 0.6, // Radius (0-1) from center where masking starts
   centerMaskFeather: 0.6, // Softness of the mask edge
-  centerMaskMinOpacity: 0.03, // Minimum opacity at center
+  centerMaskMinOpacity: 0.16, // Minimum opacity at center
   debugPlane: false,     // Show a debug plane to visualize vertex noise
   debugPlaneSize: 240,  // Debug plane size
   debugPlaneRotationX: 90, // Debug plane rotation X (degrees)
@@ -238,6 +238,12 @@ function draw() {
   petalBuffer.begin();
   clear();
 
+  // Transparency setup: disable depth test for proper alpha blending
+  const gl = drawingContext;
+  gl.disable(gl.DEPTH_TEST);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
   ambientLight(180);
   directionalLight(255, 255, 255, 0, 0, -1);
   pointLight(255, 255, 255, width/2, -height/2, 200);
@@ -270,6 +276,7 @@ function draw() {
   }
 
   drawDebugPlane();
+  gl.enable(gl.DEPTH_TEST);
   petalBuffer.end();
 
   // Composite with a full-screen pass that applies the center mask
